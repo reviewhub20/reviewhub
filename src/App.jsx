@@ -71,8 +71,7 @@ function SentimentDot({ sentiment }) {
   return <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: colors[sentiment] || "#888", marginRight: 5 }} />;
 }
 
-export default function App() {
-  const [activeTab, setActiveTab]               = useState("dashboard");
+export default function App({ user, onLogout }) {  const [activeTab, setActiveTab]               = useState("dashboard");
   const [reviews, setReviews]                   = useState([]);
   const [loading, setLoading]                   = useState(true);
   const [error, setError]                       = useState(null);
@@ -211,7 +210,9 @@ html, body { width: 100%; overflow-x: hidden; }
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #6366F1, #8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>★</div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 16, fontFamily: "Syne", letterSpacing: "-0.02em" }}>ReviewHub</div>
+           <div style={{ fontWeight: 800, fontSize: 16, fontFamily: "Syne", letterSpacing: "-0.02em" }}>ReviewHub</div>
+<div style={{ fontSize: 13, color: "#888" }}>👋 {user?.nom}</div>
+<button onClick={() => window.location.reload()} style={{ background: "#1E1E2E", border: "none", borderRadius: 8, padding: "8px 12px", color: "#888", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Déconnexion</button>
             <div style={{ fontSize: 10, color: "#10B981", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>● Supabase connecté</div>
           </div>
         </div>
@@ -225,6 +226,8 @@ html, body { width: 100%; overflow-x: hidden; }
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {stats.pending > 0 && <div style={{ background: "#EF4444", color: "#fff", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700 }}>{stats.pending} en attente</div>}
           <button onClick={load} title="Rafraîchir" style={{ width: 36, height: 36, borderRadius: 10, background: "#1E1E2E", border: "none", color: "#888", cursor: "pointer", fontSize: 18 }}>↻</button>
+<div style={{ fontSize: 13, color: "#888", fontWeight: 600 }}>👋 {user?.nom}</div>
+<button onClick={onLogout} style={{ background: "#1E1E2E", border: "none", borderRadius: 8, padding: "8px 12px", color: "#EF4444", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Déconnexion</button>
         </div>
       </div>
 
