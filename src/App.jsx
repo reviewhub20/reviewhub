@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 
 const SUPABASE_URL = "https://vwuekpxqswohphcnqyzl.supabase.co/rest/v1";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ3dWVrcHhxc3dvaHBoY25xeXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwOTAzODcsImV4cCI6MjA4ODY2NjM4N30.VhS3kaGBlj58CRs_te30vVcNz5gXiPf0qduUhOAdNx8";
-const RESTO_ID = "0908a863-4030-4be3-8a1b-846e211f5b70";
 
 const HEADERS = {
   "apikey": SUPABASE_KEY,
@@ -10,8 +9,8 @@ const HEADERS = {
   "Content-Type": "application/json",
 };
 
-async function fetchAvis() {
-  const res = await fetch(`${SUPABASE_URL}/avis?restaurant_id=eq.${RESTO_ID}&order=date_avis.desc`, { headers: HEADERS });
+async function fetchAvis(restaurantId) {
+  const res = await fetch(`${SUPABASE_URL}/avis?restaurant_id=eq.${restaurantId}&order=date_avis.desc`, { headers: HEADERS });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -71,7 +70,10 @@ function SentimentDot({ sentiment }) {
   return <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: colors[sentiment] || "#888", marginRight: 5 }} />;
 }
 
-export default function App({ user, onLogout }) {  const [activeTab, setActiveTab]               = useState("dashboard");
+export default function App({ user, onLogout }) {
+  const restaurantId = user?.restaurant_id || "0908a863-4030-4be3-8a1b-846e211f5b70";
+
+  const [activeTab, setActiveTab]               = useState("dashboard");
   const [reviews, setReviews]                   = useState([]);
   const [loading, setLoading]                   = useState(true);
   const [error, setError]                       = useState(null);
@@ -85,14 +87,18 @@ export default function App({ user, onLogout }) {  const [activeTab, setActiveTa
   const [sendingMsg, setSendingMsg]             = useState(false);
   const [msgSuccess, setMsgSuccess]             = useState(false);
   const [notification, setNotification]         = useState(null);
+  const [adminForm, setAdminForm]               = useState({ nom: "", email: "", mdp: "" });
+  const [adminLoading, setAdminLoading]         = useState(false);
+  const [restaurants, setRestaurants]           = useState([]);
 
   useEffect(() => { load(); }, []);
+  useEffect(() => { if (activeTab === "admin") loadRestaurants(); }, [activeTab]);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchAvis();
+      const data = await fetchAvis(restaurantId);
       setReviews(data.map(r => ({
         id:        r.id,
         platform:  r.plateforme,
@@ -108,6 +114,14 @@ export default function App({ user, onLogout }) {  const [activeTab, setActiveTa
       setError(e.message);
     }
     setLoading(false);
+  };
+
+  const loadRestaurants = async () => {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/restaurants`, { headers: HEADERS });
+      const data = await res.json();
+      setRestaurants(data);
+    } catch (e) {}
   };
 
   const showNotif = (msg, type = "success") => {
@@ -167,7 +181,7 @@ export default function App({ user, onLogout }) {  const [activeTab, setActiveTa
     if (!requestForm.name || !requestForm.phone) return;
     setSendingMsg(true);
     try {
-      await insertClient({ restaurant_id: RESTO_ID, nom: requestForm.name, telephone: requestForm.phone, sms_envoye: true });
+      await insertClient({ restaurant_id: restaurantId, nom: requestForm.name, telephone: requestForm.phone, sms_envoye: true });
       setMsgSuccess(true);
       showNotif(`${requestForm.name} enregistré! 📱`);
       setTimeout(() => { setMsgSuccess(false); setRequestForm({ name: "", phone: "", platform: "google" }); }, 2500);
@@ -177,10 +191,35 @@ export default function App({ user, onLogout }) {  const [activeTab, setActiveTa
     setSendingMsg(false);
   };
 
+  const createRestaurant = async () => {
+    if (!adminForm.nom || !adminForm.email || !adminForm.mdp) return;
+    setAdminLoading(true);
+    try {
+      const resResto = await fetch(`${SUPABASE_URL}/restaurants`, {
+        method: "POST",
+        headers: { ...HEADERS, "Prefer": "return=representation" },
+        body: JSON.stringify({ nom: adminForm.nom, email: adminForm.email })
+      });
+      const resto = await resResto.json();
+      const restoId = Array.isArray(resto) ? resto[0]?.id : resto?.id;
+      if (!restoId) throw new Error("ID introuvable");
+      await fetch(`${SUPABASE_URL}/users`, {
+        method: "POST",
+        headers: { ...HEADERS, "Prefer": "return=minimal" },
+        body: JSON.stringify({ email: adminForm.email, mot_de_passe: adminForm.mdp, nom: adminForm.nom, role: "client", restaurant_id: restoId })
+      });
+      showNotif(`Restaurant "${adminForm.nom}" créé! ✓`);
+      setAdminForm({ nom: "", email: "", mdp: "" });
+      loadRestaurants();
+    } catch (e) {
+      showNotif("Erreur: " + e.message, "error");
+    }
+    setAdminLoading(false);
+  };
+
   const ratingDist = [5,4,3,2,1].map(r => ({ r, count: reviews.filter(rev => rev.rating === r).length }));
   const maxCount   = Math.max(...ratingDist.map(d => d.count), 1);
-
-  const card = { background: "#111118", border: "1px solid #1E1E2E", borderRadius: 16, padding: 24 };
+  const card   = { background: "#111118", border: "1px solid #1E1E2E", borderRadius: 16, padding: 24 };
   const navBtn = (active) => ({ padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer", background: active ? "#6366F1" : "transparent", color: active ? "#fff" : "#666", fontWeight: 600, fontSize: 13, transition: "all 0.2s", fontFamily: "Syne" });
 
   return (
@@ -188,7 +227,7 @@ export default function App({ user, onLogout }) {  const [activeTab, setActiveTa
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { width: 100%; overflow-x: hidden; }
+        html, body { width: 100%; overflow-x: hidden; }
         ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
         textarea, input { font-family: 'DM Sans', sans-serif; }
         input::placeholder, textarea::placeholder { color: #444; }
@@ -198,40 +237,35 @@ html, body { width: 100%; overflow-x: hidden; }
         @keyframes spin    { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
       `}</style>
 
-      {/* Notification */}
       {notification && (
         <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, background: notification.type === "error" ? "#EF4444" : "#10B981", color: "#fff", padding: "12px 20px", borderRadius: 12, fontWeight: 600, fontSize: 14, animation: "slideIn 0.3s ease", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
           {notification.msg}
         </div>
       )}
 
-      {/* Header */}
       <div style={{ background: "#111118", borderBottom: "1px solid #1E1E2E", padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64, position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #6366F1, #8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>★</div>
           <div>
-           <div style={{ fontWeight: 800, fontSize: 16, fontFamily: "Syne", letterSpacing: "-0.02em" }}>ReviewHub</div>
-<div style={{ fontSize: 13, color: "#888" }}>👋 {user?.nom}</div>
-<button onClick={() => window.location.reload()} style={{ background: "#1E1E2E", border: "none", borderRadius: 8, padding: "8px 12px", color: "#888", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Déconnexion</button>
+            <div style={{ fontWeight: 800, fontSize: 16, fontFamily: "Syne", letterSpacing: "-0.02em" }}>ReviewHub</div>
             <div style={{ fontSize: 10, color: "#10B981", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>● Supabase connecté</div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 4 }}>
-          {["dashboard","avis","répondre","inviter"].map(tab => (
+          {["dashboard","avis","répondre","inviter", ...(user?.role === "admin" ? ["admin"] : [])].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} style={navBtn(activeTab === tab)}>
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab === "admin" ? "⚙️ Admin" : tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
           ))}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {stats.pending > 0 && <div style={{ background: "#EF4444", color: "#fff", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700 }}>{stats.pending} en attente</div>}
           <button onClick={load} title="Rafraîchir" style={{ width: 36, height: 36, borderRadius: 10, background: "#1E1E2E", border: "none", color: "#888", cursor: "pointer", fontSize: 18 }}>↻</button>
-<div style={{ fontSize: 13, color: "#888", fontWeight: 600 }}>👋 {user?.nom}</div>
-<button onClick={onLogout} style={{ background: "#1E1E2E", border: "none", borderRadius: 8, padding: "8px 12px", color: "#EF4444", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Déconnexion</button>
+          <div style={{ fontSize: 13, color: "#888", fontWeight: 600 }}>👋 {user?.nom}</div>
+          <button onClick={onLogout} style={{ background: "#1E1E2E", border: "1px solid #333", borderRadius: 8, padding: "7px 12px", color: "#EF4444", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Déconnexion</button>
         </div>
       </div>
 
-      {/* Loading */}
       {loading && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "60vh", flexDirection: "column", gap: 16 }}>
           <div style={{ width: 40, height: 40, border: "3px solid #1E1E2E", borderTop: "3px solid #6366F1", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
@@ -239,7 +273,6 @@ html, body { width: 100%; overflow-x: hidden; }
         </div>
       )}
 
-      {/* Error */}
       {!loading && error && (
         <div style={{ maxWidth: 500, margin: "60px auto", background: "#1A0A0A", border: "1px solid #EF4444", borderRadius: 16, padding: 32, textAlign: "center" }}>
           <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
@@ -249,22 +282,19 @@ html, body { width: 100%; overflow-x: hidden; }
         </div>
       )}
 
-      {/* Main */}
       {!loading && !error && (
-        <div style={{padding: "28px 16px", maxWidth: "100vw", margin: "0 auto" }}>
+        <div style={{ padding: "28px 16px", maxWidth: "100vw", margin: "0 auto" }}>
 
-          {/* ── DASHBOARD ── */}
           {activeTab === "dashboard" && (
             <div style={{ animation: "fadeUp 0.4s ease" }}>
               <h1 style={{ fontFamily: "Syne", fontSize: 28, fontWeight: 800, marginBottom: 6, letterSpacing: "-0.03em" }}>Tableau de bord</h1>
               <p style={{ color: "#555", marginBottom: 28, fontSize: 14 }}>Données en temps réel depuis Supabase</p>
-
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 28 }}>
                 {[
-                  { label: "Avis total",       value: stats.total,             icon: "📊", color: "#6366F1" },
-                  { label: "Note moyenne",      value: `${stats.avg}/5`,        icon: "⭐", color: "#F59E0B" },
-                  { label: "Taux de réponse",  value: `${stats.responseRate}%`, icon: "💬", color: "#10B981" },
-                  { label: "Sans réponse",      value: stats.pending,           icon: "🔔", color: "#EF4444" },
+                  { label: "Avis total",      value: stats.total,             icon: "📊", color: "#6366F1" },
+                  { label: "Note moyenne",     value: `${stats.avg}/5`,        icon: "⭐", color: "#F59E0B" },
+                  { label: "Taux de réponse", value: `${stats.responseRate}%`, icon: "💬", color: "#10B981" },
+                  { label: "Sans réponse",     value: stats.pending,           icon: "🔔", color: "#EF4444" },
                 ].map(s => (
                   <div key={s.label} style={{ ...card, position: "relative", overflow: "hidden" }}>
                     <div style={{ position: "absolute", top: 16, right: 16, fontSize: 22 }}>{s.icon}</div>
@@ -273,7 +303,6 @@ html, body { width: 100%; overflow-x: hidden; }
                   </div>
                 ))}
               </div>
-
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
                 <div style={card}>
                   <h3 style={{ fontFamily: "Syne", fontWeight: 700, marginBottom: 20, fontSize: 15 }}>Par plateforme</h3>
@@ -309,7 +338,6 @@ html, body { width: 100%; overflow-x: hidden; }
                   ))}
                 </div>
               </div>
-
               <div style={card}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                   <h3 style={{ fontFamily: "Syne", fontWeight: 700, fontSize: 15 }}>Avis sans réponse</h3>
@@ -335,7 +363,6 @@ html, body { width: 100%; overflow-x: hidden; }
             </div>
           )}
 
-          {/* ── AVIS ── */}
           {activeTab === "avis" && (
             <div style={{ animation: "fadeUp 0.4s ease" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24, flexWrap: "wrap", gap: 16 }}>
@@ -393,7 +420,6 @@ html, body { width: 100%; overflow-x: hidden; }
             </div>
           )}
 
-          {/* ── RÉPONDRE ── */}
           {activeTab === "répondre" && (
             <div style={{ animation: "fadeUp 0.4s ease" }}>
               <h1 style={{ fontFamily: "Syne", fontSize: 28, fontWeight: 800, marginBottom: 6, letterSpacing: "-0.03em" }}>Répondre aux avis</h1>
@@ -417,7 +443,6 @@ html, body { width: 100%; overflow-x: hidden; }
                     </div>
                   ))}
                 </div>
-
                 {selectedReview && (
                   <div style={{ ...card, position: "sticky", top: 80, height: "fit-content" }}>
                     <div style={{ marginBottom: 18, paddingBottom: 16, borderBottom: "1px solid #1E1E2E" }}>
@@ -428,13 +453,10 @@ html, body { width: 100%; overflow-x: hidden; }
                       </div>
                       <p style={{ fontSize: 13, color: "#888", lineHeight: 1.6 }}>{selectedReview.text}</p>
                     </div>
-
                     <button onClick={() => generateAIReply(selectedReview)} disabled={generating} style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: generating?"#1E1E2E":"linear-gradient(135deg, #6366F1, #8B5CF6)", color: generating?"#555":"#fff", fontWeight: 700, fontSize: 14, cursor: generating?"not-allowed":"pointer", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "Syne" }}>
                       {generating ? <><span style={{ animation: "pulse 1s infinite" }}>✦</span> Génération en cours...</> : "✦ Générer avec l'IA"}
                     </button>
-
                     <textarea value={replyDraft} onChange={e => setReplyDraft(e.target.value)} placeholder="Rédigez ou générez une réponse..." style={{ width: "100%", height: 130, background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10, padding: 14, color: "#E8E8F0", fontSize: 13, lineHeight: 1.6, outline: "none", resize: "none" }} />
-
                     <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
                       <button onClick={() => { setSelectedReview(null); setReplyDraft(""); }} style={{ flex: 1, padding: "11px", background: "transparent", border: "1px solid #333", borderRadius: 10, color: "#666", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>Annuler</button>
                       <button onClick={() => publishReply(selectedReview.id)} disabled={!replyDraft.trim() || publishing} style={{ flex: 2, padding: "11px", background: replyDraft.trim()?"linear-gradient(135deg, #6366F1, #8B5CF6)":"#1A1A2E", border: "none", borderRadius: 10, color: replyDraft.trim()?"#fff":"#444", fontWeight: 700, cursor: replyDraft.trim()?"pointer":"not-allowed", fontSize: 14, fontFamily: "Syne", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
@@ -447,7 +469,6 @@ html, body { width: 100%; overflow-x: hidden; }
             </div>
           )}
 
-          {/* ── INVITER ── */}
           {activeTab === "inviter" && (
             <div style={{ animation: "fadeUp 0.4s ease", maxWidth: 640 }}>
               <h1 style={{ fontFamily: "Syne", fontSize: 28, fontWeight: 800, marginBottom: 6, letterSpacing: "-0.03em" }}>Inviter des clients</h1>
@@ -481,6 +502,50 @@ html, body { width: 100%; overflow-x: hidden; }
                 <button onClick={sendReviewRequest} disabled={!requestForm.name||!requestForm.phone||sendingMsg||msgSuccess} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: msgSuccess?"#10B981":(!requestForm.name||!requestForm.phone)?"#1A1A2E":"linear-gradient(135deg, #6366F1, #8B5CF6)", color: (!requestForm.name||!requestForm.phone)?"#444":"#fff", fontWeight: 800, fontSize: 15, cursor: (!requestForm.name||!requestForm.phone)?"not-allowed":"pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "Syne" }}>
                   {msgSuccess?"✓ Client enregistré!":sendingMsg?<><span style={{animation:"pulse 1s infinite"}}>●</span> Enregistrement...</>:"💾 Enregistrer le client"}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "admin" && user?.role === "admin" && (
+            <div style={{ animation: "fadeUp 0.4s ease" }}>
+              <h1 style={{ fontFamily: "Syne", fontSize: 28, fontWeight: 800, marginBottom: 6, letterSpacing: "-0.03em" }}>Panel Admin</h1>
+              <p style={{ color: "#555", marginBottom: 28, fontSize: 14 }}>Gérez tous vos restaurants</p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                <div style={card}>
+                  <h3 style={{ fontFamily: "Syne", fontWeight: 700, marginBottom: 20, fontSize: 16 }}>➕ Créer un compte restaurant</h3>
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ fontSize: 12, color: "#666", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Nom du restaurant</label>
+                    <input value={adminForm.nom} onChange={e => setAdminForm(p=>({...p,nom:e.target.value}))} placeholder="ex: Restaurant Le Bon Goût" style={{ width: "100%", padding: "12px 14px", background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10, color: "#E8E8F0", fontSize: 14, outline: "none" }} />
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ fontSize: 12, color: "#666", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Email</label>
+                    <input value={adminForm.email} onChange={e => setAdminForm(p=>({...p,email:e.target.value}))} placeholder="restaurant@email.com" style={{ width: "100%", padding: "12px 14px", background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10, color: "#E8E8F0", fontSize: 14, outline: "none" }} />
+                  </div>
+                  <div style={{ marginBottom: 24 }}>
+                    <label style={{ fontSize: 12, color: "#666", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Mot de passe</label>
+                    <input value={adminForm.mdp} onChange={e => setAdminForm(p=>({...p,mdp:e.target.value}))} placeholder="motdepasse123" style={{ width: "100%", padding: "12px 14px", background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10, color: "#E8E8F0", fontSize: 14, outline: "none" }} />
+                  </div>
+                  <button onClick={createRestaurant} disabled={!adminForm.nom||!adminForm.email||!adminForm.mdp||adminLoading} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: (!adminForm.nom||!adminForm.email||!adminForm.mdp)?"#1A1A2E":"linear-gradient(135deg, #6366F1, #8B5CF6)", color: (!adminForm.nom||!adminForm.email||!adminForm.mdp)?"#444":"#fff", fontWeight: 800, fontSize: 15, cursor: (!adminForm.nom||!adminForm.email||!adminForm.mdp)?"not-allowed":"pointer", fontFamily: "Syne" }}>
+                    {adminLoading ? "Création..." : "➕ Créer le restaurant"}
+                  </button>
+                </div>
+                <div style={card}>
+                  <h3 style={{ fontFamily: "Syne", fontWeight: 700, marginBottom: 20, fontSize: 16 }}>🏪 Restaurants ({restaurants.length})</h3>
+                  {restaurants.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: 30, color: "#444" }}>Aucun restaurant</div>
+                  ) : restaurants.map(r => (
+                    <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid #1A1A24" }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #6366F1, #8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, flexShrink: 0, color: "#fff" }}>
+                        {r.nom?.charAt(0) || "?"}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nom}</div>
+                        <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>{r.email}</div>
+                      </div>
+                      <div style={{ fontSize: 11, color: "#10B981", fontWeight: 600 }}>● Actif</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}
