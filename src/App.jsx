@@ -9,6 +9,28 @@ const HEADERS = {
   "Content-Type": "application/json",
 };
 
+const TRIPADVISOR_API_KEY = "933FD617F7084CB7BE1F27E8D4B69FDA";
+
+async function fetchTripAdvisorReviews(locationId) {
+  const res = await fetch(
+    `https://api.content.tripadvisor.com/api/v1/location/${locationId}/reviews?language=fr&key=${TRIPADVISOR_API_KEY}`,
+    { headers: { "accept": "application/json" } }
+  );
+  if (!res.ok) throw new Error("Erreur TripAdvisor: " + await res.text());
+  const data = await res.json();
+  return data.data || [];
+}
+
+async function searchTripAdvisorLocation(query) {
+  const res = await fetch(
+    `https://api.content.tripadvisor.com/api/v1/location/search?searchQuery=${encodeURIComponent(query)}&category=restaurants&language=fr&key=${TRIPADVISOR_API_KEY}`,
+    { headers: { "accept": "application/json" } }
+  );
+  if (!res.ok) throw new Error("Erreur recherche TripAdvisor");
+  const data = await res.json();
+  return data.data || [];
+}
+
 async function fetchAvis(restaurantId) {
   const res = await fetch(`${SUPABASE_URL}/avis?restaurant_id=eq.${restaurantId}&order=date_avis.desc`, { headers: HEADERS });
   if (!res.ok) throw new Error(await res.text());
@@ -87,9 +109,19 @@ export default function App({ user, onLogout }) {
   const [sendingMsg, setSendingMsg]             = useState(false);
   const [msgSuccess, setMsgSuccess]             = useState(false);
   const [notification, setNotification]         = useState(null);
-  const [adminForm, setAdminForm]               = useState({ nom: "", email: "", mdp: "" });
+  const [adminForm, setAdminForm]               = useState({ nom: "", email: "", mdp: "", ta_id: "" });
   const [adminLoading, setAdminLoading]         = useState(false);
   const [restaurants, setRestaurants]           = useState([]);
+  const [taSearch, setTaSearch]                 = useState("");
+  const [taResults, setTaResults]               = useState([]);
+  const [taSearching, setTaSearching]           = useState(false);
+  const [taSyncing, setTaSyncing]               = useState(false);
+  const [taSyncedCount, setTaSyncedCount]       = useState(null);
+  const [yelpSearch, setYelpSearch]             = useState("");
+  const [yelpResults, setYelpResults]           = useState([]);
+  const [yelpSearching, setYelpSearching]       = useState(false);
+  const [yelpSyncing, setYelpSyncing]           = useState(false);
+  const [yelpSyncedCount, setYelpSyncedCount]   = useState(null);
 
   useEffect(() => { load(); }, []);
   useEffect(() => { if (activeTab === "admin") loadRestaurants(); }, [activeTab]);
@@ -191,6 +223,74 @@ export default function App({ user, onLogout }) {
     setSendingMsg(false);
   };
 
+  const searchTripAdvisor = async () => {
+    if (!taSearch.trim()) return;
+    setTaSearching(true);
+    setTaResults([]);
+    try {
+      const res = await fetch('http://localhost:3001/api/tripadvisor/search?query=' + encodeURIComponent(taSearch));
+      const data = await res.json();
+      setTaResults(data.data || []);
+    } catch (e) {
+      showNotif("Erreur recherche: " + e.message, "error");
+    }
+    setTaSearching(false);
+  };
+
+  const syncTripAdvisorReviews = async (locationId, locationName) => {
+    setTaSyncing(true);
+    setTaSyncedCount(null);
+    try {
+      const res = await fetch('http://localhost:3001/api/tripadvisor/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restaurantId, locationId }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Erreur sync");
+      showNotif('Avis TripAdvisor synchronisés! ✓');
+      setTaSyncedCount(true);
+      load();
+    } catch (e) {
+      showNotif("Erreur sync: " + e.message, "error");
+    }
+    setTaSyncing(false);
+  };
+
+  const searchYelp = async () => {
+    if (!yelpSearch.trim()) return;
+    setYelpSearching(true);
+    setYelpResults([]);
+    try {
+      const res = await fetch('http://localhost:3001/api/yelp/search?query=' + encodeURIComponent(yelpSearch));
+      const data = await res.json();
+      setYelpResults(data.businesses || []);
+    } catch (e) {
+      showNotif("Erreur recherche Yelp: " + e.message, "error");
+    }
+    setYelpSearching(false);
+  };
+
+  const syncYelpReviews = async (businessId, businessName) => {
+    setYelpSyncing(true);
+    setYelpSyncedCount(null);
+    try {
+      const res = await fetch('http://localhost:3001/api/yelp/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restaurantId, businessId }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Erreur sync");
+      showNotif('Avis Yelp synchronisés! ✓');
+      setYelpSyncedCount(true);
+      load();
+    } catch (e) {
+      showNotif("Erreur sync Yelp: " + e.message, "error");
+    }
+    setYelpSyncing(false);
+  };
+
   const createRestaurant = async () => {
     if (!adminForm.nom || !adminForm.email || !adminForm.mdp) return;
     setAdminLoading(true);
@@ -198,7 +298,7 @@ export default function App({ user, onLogout }) {
       const resResto = await fetch(`${SUPABASE_URL}/restaurants`, {
         method: "POST",
         headers: { ...HEADERS, "Prefer": "return=representation" },
-        body: JSON.stringify({ nom: adminForm.nom, email: adminForm.email })
+        body: JSON.stringify({ nom: adminForm.nom, email: adminForm.email, tripadvisor_location_id: adminForm.ta_id || null })
       });
       const resto = await resResto.json();
       const restoId = Array.isArray(resto) ? resto[0]?.id : resto?.id;
@@ -209,7 +309,7 @@ export default function App({ user, onLogout }) {
         body: JSON.stringify({ email: adminForm.email, mot_de_passe: adminForm.mdp, nom: adminForm.nom, role: "client", restaurant_id: restoId })
       });
       showNotif(`Restaurant "${adminForm.nom}" créé! ✓`);
-      setAdminForm({ nom: "", email: "", mdp: "" });
+      setAdminForm({ nom: "", email: "", mdp: "", ta_id: "" });
       loadRestaurants();
     } catch (e) {
       showNotif("Erreur: " + e.message, "error");
@@ -521,9 +621,16 @@ export default function App({ user, onLogout }) {
                     <label style={{ fontSize: 12, color: "#666", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Email</label>
                     <input value={adminForm.email} onChange={e => setAdminForm(p=>({...p,email:e.target.value}))} placeholder="restaurant@email.com" style={{ width: "100%", padding: "12px 14px", background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10, color: "#E8E8F0", fontSize: 14, outline: "none" }} />
                   </div>
-                  <div style={{ marginBottom: 24 }}>
+                  <div style={{ marginBottom: 16 }}>
                     <label style={{ fontSize: 12, color: "#666", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>Mot de passe</label>
                     <input value={adminForm.mdp} onChange={e => setAdminForm(p=>({...p,mdp:e.target.value}))} placeholder="motdepasse123" style={{ width: "100%", padding: "12px 14px", background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10, color: "#E8E8F0", fontSize: 14, outline: "none" }} />
+                  </div>
+                  <div style={{ marginBottom: 24 }}>
+                    <label style={{ fontSize: 12, color: "#666", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 8 }}>
+                      <span style={{ color: "#00AA6C" }}>T</span> TripAdvisor Location ID <span style={{ color: "#444", fontWeight: 400, textTransform: "none" }}>(optionnel)</span>
+                    </label>
+                    <input value={adminForm.ta_id} onChange={e => setAdminForm(p=>({...p,ta_id:e.target.value}))} placeholder="ex: 123456" style={{ width: "100%", padding: "12px 14px", background: "#0A0A0F", border: "1px solid #00AA6C30", borderRadius: 10, color: "#E8E8F0", fontSize: 14, outline: "none" }} />
+                    <div style={{ fontSize: 11, color: "#444", marginTop: 6 }}>Trouvable via la recherche TripAdvisor ci-dessous</div>
                   </div>
                   <button onClick={createRestaurant} disabled={!adminForm.nom||!adminForm.email||!adminForm.mdp||adminLoading} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: (!adminForm.nom||!adminForm.email||!adminForm.mdp)?"#1A1A2E":"linear-gradient(135deg, #6366F1, #8B5CF6)", color: (!adminForm.nom||!adminForm.email||!adminForm.mdp)?"#444":"#fff", fontWeight: 800, fontSize: 15, cursor: (!adminForm.nom||!adminForm.email||!adminForm.mdp)?"not-allowed":"pointer", fontFamily: "Syne" }}>
                     {adminLoading ? "Création..." : "➕ Créer le restaurant"}
@@ -546,6 +653,93 @@ export default function App({ user, onLogout }) {
                     </div>
                   ))}
                 </div>
+              </div>
+              {/* TripAdvisor Sync */}
+              <div style={{ ...card, marginTop: 20 }}>
+                <h3 style={{ fontFamily: "Syne", fontWeight: 700, marginBottom: 6, fontSize: 16 }}>
+                  <span style={{ color: "#00AA6C" }}>T</span> Synchroniser TripAdvisor
+                </h3>
+                <p style={{ fontSize: 12, color: "#555", marginBottom: 16 }}>Recherche ton restaurant sur TripAdvisor et importe les avis automatiquement</p>
+                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                  <input
+                    value={taSearch}
+                    onChange={e => setTaSearch(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && searchTripAdvisor()}
+                    placeholder="ex: Restaurant Le Bon Goût, Montréal"
+                    style={{ flex: 1, padding: "12px 14px", background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10, color: "#E8E8F0", fontSize: 14, outline: "none" }}
+                  />
+                  <button onClick={searchTripAdvisor} disabled={taSearching || !taSearch.trim()} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "linear-gradient(135deg, #00AA6C, #00CC88)", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 13, fontFamily: "Syne", whiteSpace: "nowrap" }}>
+                    {taSearching ? "..." : "🔍 Chercher"}
+                  </button>
+                </div>
+                {taResults.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {taResults.map(loc => (
+                      <div key={loc.location_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10 }}>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>{loc.name}</div>
+                          <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>{loc.address_obj?.address_string || ""}</div>
+                        </div>
+                        <button onClick={() => syncTripAdvisorReviews(loc.location_id, loc.name)} disabled={taSyncing} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: taSyncing ? "#1A1A2E" : "linear-gradient(135deg, #00AA6C, #00CC88)", color: taSyncing ? "#444" : "#fff", fontWeight: 700, cursor: taSyncing ? "not-allowed" : "pointer", fontSize: 12, fontFamily: "Syne" }}>
+                          {taSyncing ? "⏳ Import..." : "⬇ Importer"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {taResults.length === 0 && taSearch && !taSearching && (
+                  <div style={{ color: "#555", fontSize: 13, textAlign: "center", padding: 12 }}>Aucun résultat — essaie avec le nom exact du restaurant</div>
+                )}
+                {taSyncedCount !== null && (
+                  <div style={{ marginTop: 12, padding: "10px 16px", background: "#00AA6C20", border: "1px solid #00AA6C40", borderRadius: 10, color: "#00AA6C", fontWeight: 600, fontSize: 13 }}>
+                    ✓ Avis TripAdvisor synchronisés avec succès!
+                  </div>
+                )}
+              </div>
+
+              {/* Yelp Sync */}
+              <div style={{ ...card, marginTop: 20 }}>
+                <h3 style={{ fontFamily: "Syne", fontWeight: 700, marginBottom: 6, fontSize: 16 }}>
+                  <span style={{ color: "#FF1A1A" }}>Y</span> Synchroniser Yelp
+                </h3>
+                <p style={{ fontSize: 12, color: "#555", marginBottom: 16 }}>Recherche ton restaurant sur Yelp et importe les avis automatiquement</p>
+                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                  <input
+                    value={yelpSearch}
+                    onChange={e => setYelpSearch(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && searchYelp()}
+                    placeholder="ex: Restaurant Le Bon Goût, Montréal"
+                    style={{ flex: 1, padding: "12px 14px", background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10, color: "#E8E8F0", fontSize: 14, outline: "none" }}
+                  />
+                  <button onClick={searchYelp} disabled={yelpSearching || !yelpSearch.trim()} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "linear-gradient(135deg, #FF1A1A, #FF4444)", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 13, fontFamily: "Syne", whiteSpace: "nowrap" }}>
+                    {yelpSearching ? "..." : "🔍 Chercher"}
+                  </button>
+                </div>
+                {yelpResults.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {yelpResults.map(biz => (
+                      <div key={biz.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "#0A0A0F", border: "1px solid #1E1E2E", borderRadius: 10 }}>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>{biz.name}</div>
+                          <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>
+                            {biz.location?.address1 || ""} · ⭐ {biz.rating} ({biz.review_count} avis)
+                          </div>
+                        </div>
+                        <button onClick={() => syncYelpReviews(biz.id, biz.name)} disabled={yelpSyncing} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: yelpSyncing ? "#1A1A2E" : "linear-gradient(135deg, #FF1A1A, #FF4444)", color: yelpSyncing ? "#444" : "#fff", fontWeight: 700, cursor: yelpSyncing ? "not-allowed" : "pointer", fontSize: 12, fontFamily: "Syne" }}>
+                          {yelpSyncing ? "⏳ Import..." : "⬇ Importer"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {yelpResults.length === 0 && yelpSearch && !yelpSearching && (
+                  <div style={{ color: "#555", fontSize: 13, textAlign: "center", padding: 12 }}>Aucun résultat — essaie avec le nom exact du restaurant</div>
+                )}
+                {yelpSyncedCount !== null && (
+                  <div style={{ marginTop: 12, padding: "10px 16px", background: "#FF1A1A20", border: "1px solid #FF1A1A40", borderRadius: 10, color: "#FF4444", fontWeight: 600, fontSize: 13 }}>
+                    ✓ Avis Yelp synchronisés avec succès!
+                  </div>
+                )}
               </div>
             </div>
           )}
